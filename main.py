@@ -1,8 +1,11 @@
+import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List
 
 import urllib3
 from bs4 import BeautifulSoup
+
+import db
 
 default_headers = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.130 Safari/537.36",
@@ -45,7 +48,35 @@ def check_proxies(addrs: List[str]) -> List[str]:
     return working_addrs
 
 
+def fetch_title(proxy: urllib3.ProxyManager, title_id) -> dict:
+    url = f"https://mangadex.org/api/v2/manga/{title_id}"
+    rowid = db.run_sql(
+        "INSERT INTO scrape (proxy, url) VALUES (?, ?)",
+        (proxy.proxy_url, url),
+        return_last_insert_rowid=True,
+    )
+
+    resp = proxy.request("GET", url)
+    assert resp.status in [200, 404], resp.data
+    title = json.loads(resp.data)
+
+    db.run_sql(
+        """
+        UPDATE scrape
+        SET resp_status = ?,
+            resp_body = ?,
+            ended_at = datetime('now')
+        WHERE id = ?;
+        """,
+        (resp.status, resp.data, rowid),
+    )
+    print("Saved", title["data"]["title"])
+
+
 def main():
+    print("Migrating db")
+    db.migrate()
+
     print("Fetching proxy list")
     unchecked_proxies = fetch_proxy_list()
 
@@ -55,6 +86,14 @@ def main():
     print(f"Found {len(working_proxies)} working proxies:")
     for pr in working_proxies:
         print(pr)
+
+    proxy_managers = []
+    for pr in working_proxies:
+        pm = urllib3.ProxyManager(pr, headers=default_headers)
+        pm.proxy_url = pr
+        proxy_managers.append(pm)
+
+    fetch_title(proxy_managers[0], 8)
 
 
 if __name__ == "__main__":
