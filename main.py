@@ -33,7 +33,7 @@ def check_proxy(addr: str) -> bool:
             timeout=5,
             retries=False,
         )
-        return ping.status == 200
+        return ping.status == 200 and ping.data == b"ok "
     except urllib3.exceptions.HTTPError:
         return False
 
